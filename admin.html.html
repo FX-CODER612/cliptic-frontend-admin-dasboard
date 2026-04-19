@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Cliptic Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* Same styles – keep them */
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: #0b0b0f;
+      color: white;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px;
+      background: #111;
+      border-bottom: 1px solid #222;
+    }
+    header h1 { color: #00ffcc; font-size: 18px; }
+    .logout {
+      background: red;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .container { padding: 15px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .stat {
+      background: #15151d;
+      padding: 15px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 0 10px rgba(0,255,200,0.1);
+    }
+    .stat h2 { margin: 5px 0; color: #00ffcc; }
+    .card {
+      background: #15151d;
+      padding: 15px;
+      border-radius: 12px;
+      margin-top: 15px;
+    }
+    button {
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    .approve { background: #00c853; color: white; }
+    .reject { background: #ff1744; color: white; }
+    .credit { background: orange; color: black; }
+    .primary { background: #ff0050; color: white; }
+    input {
+      padding: 6px;
+      border-radius: 6px;
+      border: none;
+      width: 70px;
+    }
+    table {
+      width: 100%;
+      margin-top: 10px;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 8px;
+      border-bottom: 1px solid #222;
+      font-size: 13px;
+      text-align: center;
+    }
+    th { color: #00ffcc; }
+    .status-pending { color: orange; }
+    .status-approved { color: #00e676; }
+    .status-rejected { color: red; }
+    .loading { text-align: center; color: #aaa; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Cliptic Admin</h1>
+  <div class="logout" onclick="logout()">Logout</div>
+</header>
+
+<div class="container">
+  <div class="grid">
+    <div class="stat"><p>Users</p><h2 id="totalUsers">0</h2></div>
+    <div class="stat"><p>Pending Payments</p><h2 id="pendingPayments">0</h2></div>
+    <div class="stat"><p>Approved</p><h2 id="approvedPayments">0</h2></div>
+  </div>
+
+  <div class="card">
+    <button class="primary" onclick="loadAll()">🔄 Refresh Dashboard</button>
+    <p id="globalStatus" class="loading"></p>
+  </div>
+
+  <div class="card">
+    <h3>👤 Users</h3>
+    <div id="usersLoading" class="loading"></div>
+    <table id="usersTable"></table>
+  </div>
+
+  <div class="card">
+    <h3>💳 Recharge Requests</h3>
+    <p style="font-size:12px;color:#aaa;">
+      Crypto Wallet (BNB USDT): 0x1F74A8DaA15C55471055B692c64d25511678Ab3f
+    </p>
+    <div id="rechargeLoading" class="loading"></div>
+    <table id="rechargeTable"></table>
+  </div>
+</div>
+
+<script>
+// 🔧 CHANGE THIS TO YOUR RENDER BACKEND URL AFTER DEPLOYMENT
+const API = "https://cliptic-backend.onrender.com";  // <-- UPDATE ME
+
+const token = localStorage.getItem("token");
+
+// Admin check
+async function checkAdmin() {
+  try {
+    const res = await fetch(API + '/me', {
+      headers: { Authorization: "Bearer " + token }
+    });
+    if (!res.ok) throw new Error("Auth failed");
+    const user = await res.json();
+    if (user.role !== "admin") {
+      alert("Access denied – admin only");
+      window.location.href = "/";
+    }
+  } catch {
+    alert("Please log in");
+    window.location.href = "/";
+  }
+}
+checkAdmin();
+
+function logout() {
+  localStorage.removeItem("token");
+  location.href = "/";
+}
+
+// Safe fetch with retries (for Render cold starts)
+async function safeFetch(url, options = {}) {
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Request failed (${res.status})`);
+      }
+      return await res.json();
+    } catch (err) {
+      retries--;
+      if (retries === 0) throw err;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+}
+
+async function loadAll() {
+  loadUsers();
+  loadRecharges();
+}
+
+async function loadUsers() {
+  usersLoading.innerText = "Loading users...";
+  try {
+    const users = await safeFetch(API + '/admin/users', {
+      headers: { Authorization: "Bearer " + token }
+    });
+    usersLoading.innerText = "";
+    totalUsers.innerText = users.length;
+
+    let html = `<tr><th>Email</th><th>Credits</th><th>Plan</th><th>Action</th></tr>`;
+    users.forEach(u => {
+      html += `
+        <tr>
+          <td>${u.email}</td>
+          <td>${u.credits}</td>
+          <td>${u.plan}</td>
+          <td>
+            <input id="credit-${u._id}" placeholder="Amt" type="number" min="1">
+            <button class="credit" onclick="giveCredits('${u._id}')">Give</button>
+          </td>
+        </tr>
+      `;
+    });
+    usersTable.innerHTML = html;
+  } catch (err) {
+    usersLoading.innerText = "❌ Failed to load users: " + err.message;
+  }
+}
+
+async function giveCredits(userId) {
+  const amountInput = document.getElementById(`credit-${userId}`);
+  const amount = amountInput.value;
+  if (!amount || amount <= 0) return alert("Enter a positive amount");
+  if (!confirm(`Give ${amount} credits?`)) return;
+
+  globalStatus.innerText = "Processing...";
+  try {
+    const data = await safeFetch(API + '/admin/give-credits/' + userId, {
+      method: 'POST',
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token
+      },
+      body: JSON.stringify({ amount: Number(amount) })
+    });
+    globalStatus.innerText = data.message;
+    loadUsers();
+  } catch (err) {
+    globalStatus.innerText = "❌ " + err.message;
+  }
+}
+
+async function loadRecharges() {
+  rechargeLoading.innerText = "Loading payments...";
+  try {
+    const list = await safeFetch(API + '/admin/recharges', {
+      headers: { Authorization: "Bearer " + token }
+    });
+    rechargeLoading.innerText = "";
+
+    let pending = 0, approved = 0;
+    list.forEach(r => {
+      if (r.status === "pending") pending++;
+      if (r.status === "approved") approved++;
+    });
+    pendingPayments.innerText = pending;
+    approvedPayments.innerText = approved;
+
+    let html = `<tr><th>User</th><th>Type</th><th>Status</th><th>Action</th></tr>`;
+    list.forEach(r => {
+      const userEmail = r.userId?.email || "Unknown";
+      html += `
+        <tr>
+          <td>${userEmail}</td>
+          <td>${r.type}</td>
+          <td class="status-${r.status}">${r.status}</td>
+          <td>
+            ${r.status === "pending" ? `
+              <button class="approve" onclick="approve('${r._id}')">Approve</button>
+              <button class="reject" onclick="reject('${r._id}')">Reject</button>
+            ` : "—"}
+          </td>
+        </tr>
+      `;
+    });
+    rechargeTable.innerHTML = html;
+  } catch (err) {
+    rechargeLoading.innerText = "❌ Failed to load recharges: " + err.message;
+  }
+}
+
+async function approve(id) {
+  if (!confirm("Approve this payment?")) return;
+  globalStatus.innerText = "Approving...";
+  try {
+    const data = await safeFetch(API + '/admin/approve/' + id, {
+      method: 'POST',
+      headers: { Authorization: "Bearer " + token }
+    });
+    globalStatus.innerText = data.message;
+    loadAll();
+  } catch (err) {
+    globalStatus.innerText = "❌ " + err.message;
+  }
+}
+
+async function reject(id) {
+  if (!confirm("Reject this payment?")) return;
+  globalStatus.innerText = "Rejecting...";
+  try {
+    const data = await safeFetch(API + '/admin/reject/' + id, {
+      method: 'POST',
+      headers: { Authorization: "Bearer " + token }
+    });
+    globalStatus.innerText = data.message;
+    loadAll();
+  } catch (err) {
+    globalStatus.innerText = "❌ " + err.message;
+  }
+}
+
+loadAll();
+</script>
+
+</body>
+</html>
